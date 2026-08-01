@@ -1,0 +1,14 @@
+services:
+  bambu2immich:
+    build: .
+    container_name: bambu2immich
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - ./data:/data/timelapses
+    networks:
+      - immich_default
+
+networks:
+  immich_default:
+    external: true
