@@ -22,11 +22,22 @@ Any Bambu Lab printer with MQTT and FTPS support:
 ## Quick start
 
 ```bash
+curl -o docker-compose.yml https://raw.githubusercontent.com/eugene-bert/bambu2immich/main/docker-compose.yml
+curl -o .env https://raw.githubusercontent.com/eugene-bert/bambu2immich/main/.env.example
+# Edit .env with your printer and Immich details
+docker compose up -d
+```
+
+No build step needed — pulls pre-built image from `ghcr.io/eugene-bert/bambu2immich`.
+
+### Build from source
+
+```bash
 git clone https://github.com/eugene-bert/bambu2immich.git
 cd bambu2immich
 cp .env.example .env
 # Edit .env with your printer and Immich details
-docker compose up -d
+docker compose up -d --build
 ```
 
 ## Configuration

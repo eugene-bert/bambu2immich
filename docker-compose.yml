@@ -1,6 +1,6 @@
 services:
   bambu2immich:
-    build: .
+    image: ghcr.io/eugene-bert/bambu2immich:latest
     container_name: bambu2immich
     restart: unless-stopped
     env_file: .env
