@@ -1,7 +1,6 @@
 package bambu
 
 import (
-	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -21,6 +20,17 @@ type MQTTConfig struct {
 	Serial     string
 }
 
+// Client is the printer MQTT connection. Call Disconnect on shutdown.
+type Client struct {
+	inner mqtt.Client
+}
+
+func (c *Client) Disconnect() {
+	if c != nil && c.inner != nil {
+		c.inner.Disconnect(250)
+	}
+}
+
 type reportMessage struct {
 	Print *printStatus `json:"print"`
 }
@@ -29,7 +39,7 @@ type printStatus struct {
 	GcodeState string `json:"gcode_state"`
 }
 
-func Listen(cfg MQTTConfig, onFinish func()) error {
+func Listen(cfg MQTTConfig, onFinish func()) (*Client, error) {
 	broker := fmt.Sprintf("ssl://%s:8883", cfg.IP)
 	topic := fmt.Sprintf("device/%s/report", cfg.Serial)
 
@@ -39,7 +49,7 @@ func Listen(cfg MQTTConfig, onFinish func()) error {
 		AddBroker(broker).
 		SetUsername("bblp").
 		SetPassword(cfg.AccessCode).
-		SetTLSConfig(&tls.Config{InsecureSkipVerify: true}).
+		SetTLSConfig(printerTLS()).
 		SetAutoReconnect(true).
 		SetOnConnectHandler(func(c mqtt.Client) {
 			log.Printf("connected to printer MQTT at %s", cfg.IP)
@@ -55,15 +65,15 @@ func Listen(cfg MQTTConfig, onFinish func()) error {
 			log.Printf("MQTT connection lost: %v", err)
 		})
 
-	client := mqtt.NewClient(opts)
-	tok := client.Connect()
+	inner := mqtt.NewClient(opts)
+	tok := inner.Connect()
 	tok.Wait()
 	if tok.Error() != nil {
-		return fmt.Errorf("MQTT connect: %w", tok.Error())
+		return nil, fmt.Errorf("MQTT connect: %w", tok.Error())
 	}
 
 	log.Printf("subscribed to %s", topic)
-	return nil
+	return &Client{inner: inner}, nil
 }
 
 func handleMessage(payload []byte, state *PrintState, onFinish func()) {

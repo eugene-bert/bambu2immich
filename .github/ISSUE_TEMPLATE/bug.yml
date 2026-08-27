@@ -1,0 +1,34 @@
+name: Bug report
+description: Something is broken in bambu2immich
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not paste `.env` contents, access codes, API keys, or Telegram tokens.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you expected vs what you saw.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Redact secrets. Paste `docker compose logs bambu2immich`.
+      render: text
+  - type: input
+    id: printer
+    attributes:
+      label: Printer model
+      placeholder: P1S, A1 Mini, X1C, …
+  - type: dropdown
+    id: install
+    attributes:
+      label: How did you run it
+      options:
+        - Pre-built GHCR image
+        - docker compose --build
+        - go run / local binary

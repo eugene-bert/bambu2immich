@@ -1,7 +1,6 @@
 package immich
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -10,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -21,6 +21,13 @@ type Config struct {
 type uploadResponse struct {
 	ID        string `json:"id"`
 	Duplicate bool   `json:"duplicate"`
+}
+
+var httpClient = &http.Client{
+	Timeout: 15 * time.Minute,
+	CheckRedirect: func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	},
 }
 
 func Upload(cfg Config, filePath string, description string) error {
@@ -35,47 +42,75 @@ func Upload(cfg Config, filePath string, description string) error {
 		return fmt.Errorf("stat: %w", err)
 	}
 
-	now := time.Now().UTC().Format("2006-01-02T15:04:05.000Z")
-
-	var buf bytes.Buffer
-	w := multipart.NewWriter(&buf)
-
-	part, err := w.CreateFormFile("assetData", filepath.Base(filePath))
-	if err != nil {
-		return fmt.Errorf("create form file: %w", err)
+	createdAt := stat.ModTime().UTC()
+	if createdAt.IsZero() {
+		createdAt = time.Now().UTC()
 	}
-	if _, err := io.Copy(part, f); err != nil {
-		return fmt.Errorf("copy file: %w", err)
-	}
+	ts := createdAt.Format("2006-01-02T15:04:05.000Z")
 
-	w.WriteField("fileCreatedAt", now)
-	w.WriteField("fileModifiedAt", stat.ModTime().UTC().Format("2006-01-02T15:04:05.000Z"))
-	if description != "" {
-		w.WriteField("description", description)
-	}
-	w.Close()
+	pr, pw := io.Pipe()
+	w := multipart.NewWriter(pw)
 
-	req, err := http.NewRequest("POST", cfg.URL+"/api/assets", &buf)
+	go func() {
+		var pipeErr error
+		defer func() {
+			w.Close()
+			pw.CloseWithError(pipeErr)
+		}()
+
+		part, err := w.CreateFormFile("assetData", filepath.Base(filePath))
+		if err != nil {
+			pipeErr = err
+			return
+		}
+		if _, err := io.Copy(part, f); err != nil {
+			pipeErr = err
+			return
+		}
+		if err := w.WriteField("fileCreatedAt", ts); err != nil {
+			pipeErr = err
+			return
+		}
+		if err := w.WriteField("fileModifiedAt", ts); err != nil {
+			pipeErr = err
+			return
+		}
+		if description != "" {
+			if err := w.WriteField("description", description); err != nil {
+				pipeErr = err
+				return
+			}
+		}
+	}()
+
+	url := strings.TrimRight(cfg.URL, "/") + "/api/assets"
+	req, err := http.NewRequest("POST", url, pr)
 	if err != nil {
 		return fmt.Errorf("new request: %w", err)
 	}
 	req.Header.Set("Content-Type", w.FormDataContentType())
 	req.Header.Set("x-api-key", cfg.APIKey)
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("upload request: %w", err)
 	}
 	defer resp.Body.Close()
 
-	body, _ := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return fmt.Errorf("read response: %w", err)
+	}
 
-	if resp.StatusCode != 200 && resp.StatusCode != 201 {
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
 		return fmt.Errorf("upload failed (%d): %s", resp.StatusCode, string(body))
 	}
 
 	var result uploadResponse
-	json.Unmarshal(body, &result)
+	if err := json.Unmarshal(body, &result); err != nil {
+		log.Printf("uploaded %s but could not parse Immich response: %v", filepath.Base(filePath), err)
+		return nil
+	}
 
 	if result.Duplicate {
 		log.Printf("skipped duplicate: %s", filepath.Base(filePath))

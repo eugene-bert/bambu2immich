@@ -1,11 +1,20 @@
 services:
   bambu2immich:
     image: ghcr.io/eugene-bert/bambu2immich:latest
+    build: .
     container_name: bambu2immich
     restart: unless-stopped
+    user: "1000:1000"
     env_file: .env
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ./data:/data/timelapses
+    # Official Immich compose publishes this network as <project>_default.
+    # If `docker compose up` fails with "network immich_default not found":
+    #   docker network ls | grep immich
+    # then change the name below, or remove the networks: block and set
+    # IMMICH_URL=http://host.docker.internal:2283 in .env instead.
     networks:
       - immich_default
 

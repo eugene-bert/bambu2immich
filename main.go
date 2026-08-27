@@ -51,40 +51,61 @@ func main() {
 		log.Fatal("IMMICH_URL and IMMICH_API_KEY are required")
 	}
 
-	seen := make(map[string]bool)
+	if err := os.MkdirAll(ftpCfg.DownloadDir, 0o755); err != nil {
+		log.Fatalf("download dir: %v", err)
+	}
+	seen, err := bambu.LoadSeen(ftpCfg.DownloadDir)
+	if err != nil {
+		log.Fatalf("load seen: %v", err)
+	}
 
-	onFinish := func() {
-		log.Println("waiting 15s for printer to finalize timelapse...")
-		time.Sleep(15 * time.Second)
+	jobs := make(chan struct{}, 1)
+	go func() {
+		for range jobs {
+			log.Println("waiting 15s for printer to finalize timelapse...")
+			time.Sleep(15 * time.Second)
 
-		paths, err := bambu.DownloadNewTimelapses(ftpCfg, seen)
-		if err != nil {
-			log.Printf("download error: %v", err)
-		}
-		if len(paths) == 0 {
-			log.Println("no new timelapses found")
-			return
-		}
-
-		for _, path := range paths {
-			desc := fmt.Sprintf("3D print timelapse from %s", printerName)
-			if err := immich.Upload(immichCfg, path, desc); err != nil {
-				log.Printf("upload error: %v", err)
+			paths, err := bambu.DownloadNewTimelapses(ftpCfg, seen)
+			if err != nil {
+				log.Printf("download error: %v", err)
+			}
+			if len(paths) == 0 {
+				log.Println("no new timelapses found")
 				continue
 			}
 
-			if telegramCfg.Enabled() {
-				telegramCfg.Send(path)
-			}
+			for _, path := range paths {
+				desc := fmt.Sprintf("3D print timelapse from %s", printerName)
+				if err := immich.Upload(immichCfg, path, desc); err != nil {
+					log.Printf("upload error: %v", err)
+					continue
+				}
 
-			if !keepLocal {
-				os.Remove(path)
-				log.Printf("cleaned up: %s", path)
+				if telegramCfg.Enabled() {
+					telegramCfg.Send(path)
+				}
+
+				if !keepLocal {
+					if err := os.Remove(path); err != nil {
+						log.Printf("cleanup %s: %v", path, err)
+					} else {
+						log.Printf("cleaned up: %s", path)
+					}
+				}
 			}
+		}
+	}()
+
+	onFinish := func() {
+		select {
+		case jobs <- struct{}{}:
+		default:
+			log.Println("timelapse job already queued, ignoring overlapping FINISH")
 		}
 	}
 
-	if err := bambu.Listen(mqttCfg, onFinish); err != nil {
+	client, err := bambu.Listen(mqttCfg, onFinish)
+	if err != nil {
 		log.Fatal(err)
 	}
 
@@ -94,4 +115,5 @@ func main() {
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
 	<-sig
 	log.Println("shutting down")
+	client.Disconnect()
 }
